@@ -18,32 +18,20 @@ from shapely.geometry.base import BaseGeometry
 cli = click.Group()
 
 
-def _configure_logger(logger, level, stream=None):
-    formatter = logging.Formatter("%(asctime)s - %(levelname)-8s - %(message)s")
-    handler = logging.StreamHandler(stream)
-    handler.setLevel(level)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(level)
-
-
 @cli.command(help="Encode GeoJSON read from stdin as mapbox vector tiles")
-@click.option("-d", "--directory", help="Write tiles into the directory")
+@click.option(
+    "-d",
+    "--directory",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help="Write tiles into the directory",
+    default=Path("."),
+)
 # Layer name
 @click.argument("name")
 # Tile coodinates (z/x/y), or zoom level ranges (minz-maxz)
-@click.argument(
-    "tiles",
-    nargs=-1,
-)
-def encode(directory, name, tiles):
-    _configure_logger(logging, logging.INFO, stream=sys.stdout)
-
-    sorted_tiles = sorted(
-        _parse_tiles(tiles),
-        key=lambda tile: tile.z,
-        reverse=True,
-    )
+@click.argument("tiles", nargs=-1)
+def encode(directory: Path, name: str, tiles: T.Sequence[str]):
+    sorted_tiles = sorted(_parse_tiles(tiles), key=lambda tile: tile.z, reverse=True)
     sorted_levels = [tile.z for tile in sorted_tiles]
 
     # Index features: tile -> (feature, shape)
@@ -68,30 +56,35 @@ def decode():
     print(json.dumps(layers))
 
 
-def _parse_tiles(tile_texts) -> set[Tile]:
+def _parse_tiles(tile_texts: T.Iterable[str]) -> set[Tile]:
     """
     :param tile_texts: an iterable of "z/x/y" or "minz-maxz" (inclusive)
     :return: a generator of tiles
     """
-    tiles = set()
+    tiles: set[Tile] = set()
+    zoom_levels = set()
+
     for text in tile_texts:
         if "/" in text:
-            z, x, y = text.split("/")
-            tiles.add(Tile(x=int(x), y=int(y), z=int(z)))
+            _z, _x, _y = text.split("/")
+            tiles.add(Tile(x=int(_x), y=int(_y), z=int(_z)))
         elif "-" in text:
-            minz, maxz = text.split("-")
-            minz, maxz = min(int(minz), int(maxz)), max(int(minz), int(maxz))
+            _minz, _maxz = text.split("-")
+            minz, maxz = min(int(_minz), int(_maxz)), max(int(_minz), int(_maxz))
             for z in range(minz, maxz + 1):
-                tiles.add(Tile(x=None, y=None, z=z))
+                zoom_levels.add(z)
+                # tiles.add(Tile(x=None, y=None, z=z))
         else:
-            tiles.add(Tile(x=None, y=None, z=int(text)))
+            # tiles.add(Tile(x=None, y=None, z=int(text)))
+            zoom_levels.add(int(text))
 
-    # if both x/y/z and None/None/z exist in tiles, we remove None/None/z
-    removing = set(tile.z for tile in tiles if tile.x is not None)
-    for z in removing:
-        tile = Tile(x=None, y=None, z=z)
-        if tile in tiles:
-            tiles.remove(tile)
+    # If both x/y/z and None/None/z exist in tiles, we remove None/None/z
+    levels_to_be_removed = set(tile.z for tile in tiles)
+    for z in levels_to_be_removed:
+        # tile = Tile(x=None, y=None, z=z)
+        if z in zoom_levels:
+            zoom_levels.remove(z)
+    zoom_levels = zoom_levels - {tile.z for tile in tiles}
 
     return tiles
 
@@ -289,7 +282,12 @@ def _index_features(
     return indexed_features
 
 
-def write_tile(name: str, directory: Path | None, tile: Tile, indexed_features):
+def write_tile(
+    layer_name: str,
+    directory: Path,
+    tile: Tile,
+    indexed_features: dict[Tile, list[tuple[dict, BaseGeometry]]],
+) -> None:
     """
     encode features indexed in the tile and write then into the disk.
 
@@ -319,19 +317,16 @@ def write_tile(name: str, directory: Path | None, tile: Tile, indexed_features):
     ]
     encoded_tile = mvt.encode(
         {
-            "name": name,
+            "name": layer_name,
             "features": features,
         }
     )
-    tile_path = os.path.join(
-        directory or "", "{tile.z}/{tile.x}/{tile.y}.mvt".format(tile=tile)
-    )
-    tile_dir = os.path.dirname(tile_path)
-    try:
-        os.makedirs(tile_dir)
-    except OSError:
-        pass
-    with open(tile_path, "wb") as f:
+
+    tile_path = directory / f"{tile.z}" / f"{tile.x}" / f"{tile.y}.mvt"
+
+    os.makedirs(tile_path.parent, exist_ok=True)
+
+    with tile_path.open("wb") as f:
         f.write(encoded_tile)
 
     logging.info(
