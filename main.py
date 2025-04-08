@@ -32,10 +32,10 @@ cli = click.Group()
 @click.argument("tiles", nargs=-1)
 def encode(directory: Path, name: str, tiles: T.Sequence[str]):
     sorted_tiles = sorted(_parse_tiles(tiles), key=lambda tile: tile.z, reverse=True)
-    sorted_levels = [tile.z for tile in sorted_tiles]
 
     # Index features: tile -> (feature, shape)
     geojson = json.load(sys.stdin)
+    sorted_levels = [tile.z for tile in sorted_tiles]
     indexed_features = _index_features(geojson, sorted_levels)
 
     # Encode
