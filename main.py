@@ -44,14 +44,15 @@ def encode(directory: Path, name: str, tiles: T.Sequence[str]):
             assert tile.y is None
             for indexed_tile in indexed_features:
                 if indexed_tile.z == tile.z:
-                    write_tile(name, directory, indexed_tile, indexed_features)
+                    _write_tile(name, directory, indexed_tile, indexed_features)
         else:
-            write_tile(name, directory, tile, indexed_features)
+            _write_tile(name, directory, tile, indexed_features)
 
 
 @cli.command(help="Decode mapbox vector tiles to GeoJSON")
-def decode():
-    buffer = sys.stdin.buffer.read()
+@click.argument("path", type=click.File("rb"))
+def decode(path: T.BinaryIO):
+    buffer = path.read()
     layers = mvt.decode(buffer)
     print(json.dumps(layers))
 
@@ -282,7 +283,7 @@ def _index_features(
     return indexed_features
 
 
-def write_tile(
+def _write_tile(
     layer_name: str,
     directory: Path,
     tile: Tile,
